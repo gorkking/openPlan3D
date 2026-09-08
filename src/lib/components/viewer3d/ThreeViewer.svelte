@@ -37,9 +37,16 @@
 
   // Dirty flag — only render when scene changes or camera moves
   let sceneDirty = true;
-  function markSceneDirty() { sceneDirty = true; }
+  let viewerMounted = false;
+  let animId: number | undefined;
+  function requestRender() {
+    if (viewerMounted && animId === undefined) animId = requestAnimationFrame(animate);
+  }
+  function markSceneDirty() {
+    sceneDirty = true;
+    requestRender();
+  }
   let pointerControls: PointerLockControls;
-  let animId: number;
   let currentFloor = $state.raw<Floor | null>(null);
   let renderedSignature: string | null = null;
   let wallGroup: THREE.Group;
@@ -639,6 +646,7 @@
     velocity.set(0, 0, 0);
     moveForward = moveBackward = moveLeft = moveRight = false;
     lookLeft = lookRight = lookUp = lookDown = false;
+    markSceneDirty();
 
     if (typeof document !== 'undefined' && document.pointerLockElement) {
       document.exitPointerLock();
@@ -906,10 +914,12 @@
         } else if (ghostGroup) {
           ghostGroup.visible = false;
         }
+        markSceneDirty();
         renderer.domElement.style.cursor = 'crosshair';
         return;
-      } else if (ghostGroup) {
+      } else if (ghostGroup?.visible) {
         ghostGroup.visible = false;
+        markSceneDirty();
       }
 
       if (!editMode) {
@@ -993,9 +1003,7 @@
     removeGhostPreview();
     const cat = getCatalogItem(catalogId);
     if (!cat || cat.symbol) return;
-    const model = createFurnitureModelWithGLB(catalogId, cat, () => {
-      if (renderer && scene && camera) renderer.render(scene, camera);
-    }, { ghost: true });
+    const model = createFurnitureModelWithGLB(catalogId, cat, markSceneDirty, { ghost: true });
     model.visible = false;
     ghostGroup = model;
     scene.add(ghostGroup);
@@ -1006,6 +1014,7 @@
       scene.remove(ghostGroup);
       disposeModel(ghostGroup);
       ghostGroup = null;
+      markSceneDirty();
     }
   }
 
@@ -1527,7 +1536,7 @@
       };
       const model = createFurnitureModelWithGLB(fi.catalogId, furnitureDef, () => {
         // Re-render when GLB model finishes loading
-        if (renderer && scene && camera) renderer.render(scene, camera);
+        markSceneDirty();
       }, { color: fi.color, material: fi.material });
       model.position.set(fi.position.x, 1.5, fi.position.y);
       model.rotation.y = -(fi.rotation * Math.PI) / 180;
@@ -1939,12 +1948,13 @@
     } catch {
       walkthroughMouseUnavailable = true;
     }
+    markSceneDirty();
   }
 
 
 
   function animate() {
-    animId = requestAnimationFrame(animate);
+    animId = undefined;
 
     if (walkthroughMode) {
       const delta = 0.016; // Approximate 60fps
@@ -1974,8 +1984,10 @@
       }
       // Always render in walkthrough mode (camera constantly moving)
       renderer.render(scene, camera);
+      requestRender();
     } else {
-      // controls.update() may fire 'change' event (which sets sceneDirty)
+      // A change event schedules the next damping step. Once the controls settle,
+      // leave no callback queued until an interaction or scene update wakes us.
       controls.update();
       if (sceneDirty) {
         sceneDirty = false;
@@ -2010,7 +2022,8 @@
       openaiModel = getEffectiveModel(config);
     });
     init();
-    animate();
+    viewerMounted = true;
+    markSceneDirty();
 
     // Rebuild 3D scene when photo textures finish loading
     const stopTextures = setTextureLoadCallback(() => {
@@ -2041,6 +2054,7 @@
     });
 
     return () => {
+      viewerMounted = false;
       cancelAIRender();
       stopAISettings();
       stopTextures();
@@ -2048,7 +2062,8 @@
       unsub();
       stopSettings();
       unsubSel();
-      cancelAnimationFrame(animId);
+      if (animId !== undefined) cancelAnimationFrame(animId);
+      animId = undefined;
       document.removeEventListener('keydown', onKeyDown, false);
       document.removeEventListener('keyup', onKeyUp, false);
       releaseCameraPreview();
@@ -2498,7 +2513,7 @@
   <!-- Lighting Controls Toggle Button -->
   <button
     onclick={() => { lightingPanelOpen = !lightingPanelOpen; }}
-    class="absolute bottom-4 left-4 z-50 p-2 rounded-lg transition-colors {lightingPanelOpen ? 'bg-amber-500 text-white ring-2 ring-amber-300' : 'bg-black/70 text-white hover:bg-black/80'}"
+    class="absolute bottom-4 left-4 md:left-14 z-50 p-2 rounded-lg transition-colors {lightingPanelOpen ? 'bg-amber-500 text-white ring-2 ring-amber-300' : 'bg-black/70 text-white hover:bg-black/80'}"
     title="Lighting Controls"
     aria-label="Lighting Controls"
   >
@@ -2513,7 +2528,7 @@
 
   <!-- Lighting Controls Panel -->
   {#if lightingPanelOpen}
-    <div class="absolute bottom-14 left-4 z-50 bg-black/80 text-white text-xs rounded-lg backdrop-blur-sm p-3 space-y-3 min-w-[220px] select-none">
+    <div class="absolute bottom-14 left-4 md:left-14 z-50 bg-black/80 text-white text-xs rounded-lg backdrop-blur-sm p-3 space-y-3 min-w-[220px] select-none">
       <div class="font-semibold text-white/90 text-sm flex items-center gap-1.5">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/></svg>
         Lighting Controls
